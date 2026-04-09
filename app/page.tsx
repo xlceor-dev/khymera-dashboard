@@ -11,6 +11,7 @@ export default function Home() {
   const [adc, setAdc] = useState(0);
   const [input, setInput] = useState('Mueve el servo a 90 grados');
   const [response, setResponse] = useState<any | null>(null);
+  const [connected, setConnected] = useState(false)
   // const [inst, setInst] = useState(90)
 
   const [recording, setRecording] = useState(false);
@@ -112,28 +113,42 @@ export default function Home() {
   };
 
   useEffect(() => {
-    ws.current = new WebSocket(`ws://192.168.1.75/ws`);
-
-
-    ws.current.onopen = () => {
-      console.log("WebSocket conectado");
+    let retryTimeout: any;
+  
+    const connect = () => {
+      ws.current = new WebSocket(`ws://192.168.1.75/ws`);
+  
+      ws.current.onopen = () => {
+        console.log("WebSocket conectado");
+        setConnected(true);
+      };
+  
+      ws.current.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.temp !== undefined) setTemp(data.temp);
+          if (data.adc !== undefined) setAdc(data.adc);
+        } catch (e) {
+          console.error("Error parseando JSON", e);
+        }
+      };
+  
+      ws.current.onclose = () => {
+        console.log("WebSocket cerrado, reintentando...");
+        setConnected(false);
+        retryTimeout = setTimeout(connect, 2000); // reintenta cada 2s
+      };
+  
+      ws.current.onerror = () => {
+        setConnected(false);
+        ws.current?.close(); // fuerza onclose → retry
+      };
     };
-
-    ws.current.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.temp !== undefined) setTemp(data.temp);
-        if (data.adc !== undefined) setAdc(data.adc);
-      } catch (e) {
-        console.error("Error parseando JSON", e);
-      }
-    };
-
-    ws.current.onclose = () => {
-      console.log("WebSocket cerrado");
-    };
-
+  
+    connect();
+  
     return () => {
+      clearTimeout(retryTimeout);
       ws.current?.close();
     };
   }, []);
@@ -147,6 +162,9 @@ export default function Home() {
 
   return (
     <div style={{ padding: 20, fontFamily: "sans-serif" }}>
+      <div className={`flex w-full h-10 ${connected ? "bg-green-500" : "bg-red-500"} justify-center items-center text-2xl font-extrabold`}>
+        {connected? "En linea" : "Sin conexion"}
+      </div>
       <h1>Servos + telemetry</h1>
 
       <h2>Servo: {servo}°</h2>
