@@ -1,11 +1,12 @@
 "use client"; 
-import { useEffect, useState, useRef } from "react"; 
+import { useEffect, useState, useRef, useReducer } from "react"; 
 import { useRef as useMediaRef } from "react";
 import OpenAI from "openai";
 
 
 const WS_URL = "ws://192.168.1.75/ws";
 const OPENAI_API_KEY = ""; 
+const MAX_HISTORY = 60;  
 
 const SENSOR_REGISTRY = [
   {
@@ -51,6 +52,51 @@ const ACTUATOR_REGISTRY = [
   
   type ActuatorKey = (typeof ACTUATOR_REGISTRY)[number]["key"];
 
+  type TelemetryPoint = { t: number; value: number };
+  type TelemetryValues = Partial<Record<SensorKey, number>>;
+  type TelemetryHistories = Partial<Record<SensorKey, TelemetryPoint[]>>;
+  //type TelemetryStats = Partial<Record<SensorKey, { min: number; max: number }>>;
+  
+  type TelemetryAction = {
+    type: "UPDATE";
+    payload: TelemetryValues;
+  };
+  
+  type TelemetryState = {
+    values: TelemetryValues;
+    histories: TelemetryHistories;
+   // stats: TelemetryStats;
+  };
+
+  const initialTelemetryState: TelemetryState = {
+    values: {},
+    histories: {},
+  };
+
+function telemetryReducer(state:TelemetryState, action:TelemetryAction) : TelemetryState{
+    if(action.type != "UPDATE") return state
+
+    const t = Date.now();
+    const newValues = { ...state.values }
+    const newHistories = { ...state.histories }
+
+    for(const sensor of  SENSOR_REGISTRY){
+        const raw = action.payload[sensor.key]
+        if (raw == undefined) continue
+
+        const value = Number(raw)
+
+        newValues[sensor.key] = value
+        const prevHistories = newHistories[sensor.key] ?? []
+
+        newHistories[sensor.key] = [
+            ...prevHistories.slice(-(MAX_HISTORY - 1)),
+            {t, value}
+        ]
+    }
+    return {values:newValues, histories: newHistories}
+}
+
 const sendMessage = async ({instructions, input, openai, setResponse, sendServo}:{instructions:string, input:string, openai: OpenAI, setResponse(response:string):void, sendServo(value: number): void }) => {
     const completion = await openai.chat.completions.create({
       model: "gpt-4o", 
@@ -83,11 +129,10 @@ const sendMessage = async ({instructions, input, openai, setResponse, sendServo}
 export default function Dashboard() {
   const ws = useRef<WebSocket | null>(null);
   const [servo, setServo] = useState(90);
-  const [temp, setTemp] = useState(0);
-  const [adc, setAdc] = useState(0);
   const [input, setInput] = useState('Mueve el servo a 90 grados');
   const [response, setResponse] = useState<any | null>(null);
   const [connected, setConnected] = useState(false)
+  const [telemetry, dispatchTelemetry] = useReducer(telemetryReducer, initialTelemetryState)
   // const [inst, setInst] = useState(90)
 
   const [recording, setRecording] = useState(false);
@@ -175,8 +220,7 @@ export default function Dashboard() {
       ws.current.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          if (data.temp !== undefined) setTemp(data.temp);
-          if (data.adc !== undefined) setAdc(data.adc);
+            dispatchTelemetry({type: "UPDATE", payload: data})
         } catch (e) {
           console.error("Error parseando JSON", e);
         }
@@ -227,10 +271,7 @@ export default function Dashboard() {
         <h2 className="text-lg font-semibold mb-4 text-blue-400">Sensores</h2>
         <div className="grid grid-cols-2 gap-4">
           {SENSOR_REGISTRY.map((sensor) => {
-            let value: number | string = "—";
-            if (sensor.key === "temp") value = temp.toFixed(sensor.decimals);
-            if (sensor.key === "adc") value = adc;
-
+            const value = telemetry.values[sensor.key]
             return (
               <div key={sensor.key} className="bg-gray-800 rounded-lg p-4 flex flex-col gap-2">
                 <div className="text-sm opacity-70">{sensor.icon} {sensor.label}</div>
