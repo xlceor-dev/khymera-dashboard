@@ -4,7 +4,7 @@ import { useRef as useMediaRef } from "react";
 import OpenAI from "openai";
 
 
-const WS_URL = "ws://192.168.1.75/ws";
+
 const OPENAI_API_KEY = ""; 
 const MAX_HISTORY = 60;  
 
@@ -127,7 +127,8 @@ const sendMessage = async ({instructions, input, openai, setResponse, sendServo}
 
 
 export default function Dashboard() {
-  const ws = useRef<WebSocket | null>(null);
+    const sseRef = useRef<EventSource | null>(null);
+    const lastSentRef = useRef(0);
   const [servo, setServo] = useState(90);
   const [input, setInput] = useState('Mueve el servo a 90 grados');
   const [response, setResponse] = useState<any | null>(null);
@@ -206,53 +207,61 @@ export default function Dashboard() {
     setRecording(true);
   };
 
-  useEffect(() => {
-    let retryTimeout: any;
+const ESP32_URL = "http://192.168.0.159";
+
+
+useEffect(() => {
+    let active = true;
   
     const connect = () => {
-      ws.current = new WebSocket(WS_URL);
+      sseRef.current?.close();
+      const es = new EventSource(`${ESP32_URL}/events`);
+      sseRef.current = es;
   
-      ws.current.onopen = () => {
-        console.log("WebSocket conectado");
-        setConnected(true);
+      es.onopen = () => {
+        if (active) setConnected(true);
       };
   
-      ws.current.onmessage = (event) => {
+      es.addEventListener("telemetry", (e) => {
         try {
-          const data = JSON.parse(event.data);
-            dispatchTelemetry({type: "UPDATE", payload: data})
-        } catch (e) {
-          console.error("Error parseando JSON", e);
+          const data = JSON.parse(e.data);
+          dispatchTelemetry({ type: "UPDATE", payload: data });
+        } catch (err) {
+          console.error("SSE parse error", err);
         }
-      };
+      });
   
-      ws.current.onclose = () => {
-        console.log("WebSocket cerrado, reintentando...");
-        setConnected(false);
-        retryTimeout = setTimeout(connect, 2000); // reintenta cada 2s
-      };
-  
-      ws.current.onerror = () => {
-        setConnected(false);
-        ws.current?.close(); // fuerza onclose → retry
+      es.onerror = () => {
+        if (active) {
+          setConnected(false);   // ← ahora sí refleja la realidad
+          es.close();
+          setTimeout(connect, 3000); // reintento manual cada 3s
+        }
       };
     };
   
     connect();
   
     return () => {
-      clearTimeout(retryTimeout);
-      ws.current?.close();
+      active = false;
+      sseRef.current?.close();
     };
   }, []);
 
-  const sendServo = (value: number) => {
+  
+const sendServo = (value: number) => {
     setServo(value);
-    if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-      ws.current.send(JSON.stringify({ servo: value }));
-    }
+  
+    const now = Date.now();
+    if (now - lastSentRef.current < 100) return; // throttle 10Hz
+    lastSentRef.current = now;
+  
+    fetch(`${ESP32_URL}/servo`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ servo: value }),
+    }).catch((err) => console.error("POST servo error", err));
   };
-
   return (
   <div className="min-h-screen bg-gray-950 text-white p-6 font-sans">
     {/* Header */}
@@ -302,7 +311,17 @@ export default function Dashboard() {
               min={actuator.min}
               max={actuator.max}
               value={servo}
-              onChange={(e) => sendServo(Number(e.target.value))}
+              onChange={(e) => setServo(Number(e.target.value))}
+              onMouseMove={(e) => {
+                if ((e.buttons & 1) === 1) {
+                  sendServo(Number((e.target as HTMLInputElement).value));
+                }
+              }}
+              onTouchMove={(e) => {
+                const target = e.target as HTMLInputElement;
+                sendServo(Number(target.value));
+              }}
+              onMouseUp={(e) => sendServo(Number((e.target as HTMLInputElement).value))}
               className="w-full accent-purple-500"
             />
 
