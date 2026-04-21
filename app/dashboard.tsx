@@ -73,6 +73,14 @@ const ACTUATOR_REGISTRY = [
     histories: {},
   };
 
+  function now() {
+    return new Date().toLocaleTimeString("es-MX", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  }
+
 function telemetryReducer(state:TelemetryState, action:TelemetryAction) : TelemetryState{
     if(action.type != "UPDATE") return state
 
@@ -265,12 +273,7 @@ const sendServo = (value: number) => {
   return (
   <div className="min-h-screen bg-gray-950 text-white p-6 font-sans">
     {/* Header */}
-    <div className="flex items-center justify-between mb-6">
-      <h1 className="text-3xl font-bold tracking-tight">Khymera Dashboard</h1>
-      <div className={`px-4 py-2 rounded-full text-sm font-semibold ${connected ? "bg-green-500/20 text-green-400" : "bg-red-500/20 text-red-400"}`}>
-        {connected ? "● En línea" : "● Sin conexión"}
-      </div>
-    </div>
+    <StatusBar connected={connected} latency={0} />
 
     {/* Grid Layout */}
     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -384,4 +387,43 @@ const sendServo = (value: number) => {
     </div>
   </div>
 );
+}
+function StatusBar({ connected, latency }: { connected: boolean; latency: number }) {
+  return (
+    <div
+      className={`flex items-center justify-between px-5 py-2.5 border-b mb-5 font-mono ${
+        connected
+          ? "bg-[#0d3320] border-[#1a6b44]"
+          : "bg-[#3a0d0d] border-[#6b1a1a]"
+      }`}
+    >
+      <div className="flex items-center gap-2.5">
+        <div
+          className={`w-2.5 h-2.5 rounded-full ${
+            connected
+              ? "bg-green-500 shadow-[0_0_8px_#22c55e]"
+              : "bg-red-500 shadow-[0_0_8px_#ef4444]"
+          }`}
+        />
+        
+        <span
+          className={`text-[13px] font-semibold tracking-[0.05em] ${
+            connected ? "text-green-300" : "text-red-300"
+          }`}
+        >
+            <h1 className="text-3xl font-bold tracking-tight">Khymera Dashboard</h1>
+          {connected ? "ESP32 CONECTADO" : "SIN CONEXIÓN — REINTENTANDO..."}
+        </span>
+        
+      </div>
+      <div className="flex gap-5 text-xs text-slate-400">
+        {connected && (
+          <span>
+            LATENCIA: <span className="text-sky-400">—</span>
+          </span>
+        )}
+        <span className="text-slate-500">{now()}</span>
+      </div>
+    </div>
+  );
 }
