@@ -1,6 +1,7 @@
 "use client"; 
 import { useEffect, useState, useRef, useReducer } from "react"; 
 import { useRef as useMediaRef } from "react";
+import MetricCard from "./components/metricCard";
 import OpenAI from "openai";
 
 
@@ -241,9 +242,9 @@ useEffect(() => {
   
       es.onerror = () => {
         if (active) {
-          setConnected(false);   // ← ahora sí refleja la realidad
+          setConnected(false); 
           es.close();
-          setTimeout(connect, 3000); // reintento manual cada 3s
+          setTimeout(connect, 3000); 
         }
       };
     };
@@ -261,7 +262,7 @@ const sendServo = (value: number) => {
     setServo(value);
   
     const now = Date.now();
-    if (now - lastSentRef.current < 100) return; // throttle 10Hz
+    if (now - lastSentRef.current < 100) return; 
     lastSentRef.current = now;
   
     fetch(`${ESP32_URL}/servo`, {
@@ -272,34 +273,30 @@ const sendServo = (value: number) => {
   };
   return (
   <div className="min-h-screen bg-gray-950 text-white p-6 font-sans">
-    {/* Header */}
+
     <StatusBar connected={connected} latency={0} />
-
-    {/* Grid Layout */}
     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-
-      {/* Sensors Card */}
-      <div className="bg-gray-900 rounded-xl border border-gray-800 shadow-lg p-4">
+      <div className="rounded-xl ">
         <h2 className="text-lg font-semibold mb-4 text-blue-400">Sensores</h2>
         <div className="grid grid-cols-2 gap-4">
-          {SENSOR_REGISTRY.map((sensor) => {
-            const value = telemetry.values[sensor.key]
+        {SENSOR_REGISTRY.map((sensor) => {
+            const val = telemetry.values[sensor.key];
             return (
-              <div key={sensor.key} className="bg-gray-800 rounded-lg p-4 flex flex-col gap-2">
-                <div className="text-sm opacity-70">{sensor.icon} {sensor.label}</div>
-                <div className="text-2xl font-bold">
-                  {value} {sensor.unit}
-                </div>
-                {sensor.subtext && (
-                  <div className="text-xs opacity-50">{sensor.subtext}</div>
-                )}
-              </div>
+              <MetricCard
+                key={sensor.key}
+                label={sensor.label}
+                value={val !== undefined ? val.toFixed(sensor.decimals) : "—"}
+                unit={sensor.unit}
+                icon={sensor.icon}
+                color={sensor.color}
+                subtext={sensor.subtext}
+              />
             );
           })}
         </div>
       </div>
 
-      {/* Actuators Card */}
+
       <div className="bg-gray-900 rounded-xl border border-gray-800 shadow-lg p-4">
         <h2 className="text-lg font-semibold mb-4 text-purple-400">Actuadores</h2>
         {ACTUATOR_REGISTRY.map((actuator) => (
@@ -343,7 +340,6 @@ const sendServo = (value: number) => {
         ))}
       </div>
 
-      {/* Assistant Card */}
       <div className="bg-gray-900 rounded-xl border border-gray-800 shadow-lg p-4 md:col-span-2">
         <h2 className="text-lg font-semibold mb-4 text-cyan-400">Asistente</h2>
 
@@ -370,7 +366,7 @@ const sendServo = (value: number) => {
           </button>
         </div>
 
-        {/* Response */}
+z
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 font-mono text-sm">
           <div className="bg-emerald-500/10 p-3 rounded">
             <strong>act:</strong> {response?.act ?? "—"}
