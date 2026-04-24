@@ -1,13 +1,18 @@
 "use client"; 
-import { useEffect, useState, useRef, useReducer } from "react"; 
+import { useEffect, useState, useRef, useReducer, useCallback } from "react"; 
 import { useRef as useMediaRef } from "react";
 import MetricCard from "./components/metricCard";
 import OpenAI from "openai";
-
+import SparklineChart from "./components/sparklineChart";
 
 
 const OPENAI_API_KEY = ""; 
 const MAX_HISTORY = 60;  
+
+const initialTelemetryState: TelemetryState = {
+  values: {},
+  histories: {},
+};
 
 const SENSOR_REGISTRY = [
   {
@@ -51,28 +56,6 @@ const ACTUATOR_REGISTRY = [
     },
   ] as const;
   
-  type ActuatorKey = (typeof ACTUATOR_REGISTRY)[number]["key"];
-
-  type TelemetryPoint = { t: number; value: number };
-  type TelemetryValues = Partial<Record<SensorKey, number>>;
-  type TelemetryHistories = Partial<Record<SensorKey, TelemetryPoint[]>>;
-  //type TelemetryStats = Partial<Record<SensorKey, { min: number; max: number }>>;
-  
-  type TelemetryAction = {
-    type: "UPDATE";
-    payload: TelemetryValues;
-  };
-  
-  type TelemetryState = {
-    values: TelemetryValues;
-    histories: TelemetryHistories;
-   // stats: TelemetryStats;
-  };
-
-  const initialTelemetryState: TelemetryState = {
-    values: {},
-    histories: {},
-  };
 
   function now() {
     return new Date().toLocaleTimeString("es-MX", {
@@ -134,6 +117,10 @@ const sendMessage = async ({instructions, input, openai, setResponse, sendServo}
     }
   };
 
+  function clamp(val: number, min: number, max: number) {
+    return Math.min(Math.max(val, min), max);
+  }
+
 
 export default function Dashboard() {
     const sseRef = useRef<EventSource | null>(null);
@@ -144,6 +131,10 @@ export default function Dashboard() {
   const [connected, setConnected] = useState(false)
   const [telemetry, dispatchTelemetry] = useReducer(telemetryReducer, initialTelemetryState)
   // const [inst, setInst] = useState(90)
+
+  const [actuatorValues, setActuatorValues] = useState<ActuatorValues>(() =>
+    Object.fromEntries(ACTUATOR_REGISTRY.map((a) => [a.key, Math.round((a.max - a.min) / 2)]))
+  );
 
   const [recording, setRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -258,85 +249,86 @@ useEffect(() => {
   }, []);
 
   
-const sendServo = (value: number) => {
-    setServo(value);
-  
+  const sendActuator = useCallback(
+    (key: ActuatorKey, rawValue: number) => {
+      const config = ACTUATOR_REGISTRY.find((a) => a.key === key);
+      if (!config) return;
+      const value = clamp(rawValue, config.min, config.max);
+
+      setActuatorValues((prev) => ({ ...prev, [key]: value }));
+
+      fetch(`${ESP32_URL}/${key}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ [key]: value }),
+      })
+        .then(() => {
+          console.log("info", `${config.label} → ${value}${config.unit}`);
+        })
+        .catch(() => {
+          console.log("error", `${config.label} fallo al enviarse`);
+        });
+    },
+    []
+  );
+
+  const sendServo = (value: number) => {
     const now = Date.now();
-    if (now - lastSentRef.current < 100) return; 
+    if (now - lastSentRef.current < 100) return;
     lastSentRef.current = now;
-  
-    fetch(`${ESP32_URL}/servo`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ servo: value }),
-    }).catch((err) => console.error("POST servo error", err));
+    sendActuator("servo", value);
   };
   return (
-  <div className="min-h-screen bg-gray-950 text-white p-6 font-sans">
+  <div className="min-h-screen bg-gray-950 text-white  font-sans">
 
     <StatusBar connected={connected} latency={0} />
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-      <div className="rounded-xl ">
-        <h2 className="text-lg font-semibold mb-4 text-blue-400">Sensores</h2>
-        <div className="grid grid-cols-2 gap-4">
-        {SENSOR_REGISTRY.map((sensor) => {
-            const val = telemetry.values[sensor.key];
-            return (
-              <MetricCard
-                key={sensor.key}
-                label={sensor.label}
-                value={val !== undefined ? val.toFixed(sensor.decimals) : "—"}
-                unit={sensor.unit}
-                icon={sensor.icon}
-                color={sensor.color}
-                subtext={sensor.subtext}
-              />
-            );
-          })}
-        </div>
-      </div>
 
+    <div className="grid grid-cols-1 md:grid-cols-2 px-4 gap-6">
+
+    <div className="grid gap-3">
+      <div className="rounded-xl bg-gray-900/70 p-4 ">
+          <div className="grid grid-cols-2 gap-4 ">
+          {SENSOR_REGISTRY.map((sensor) => {
+              const val = telemetry.values[sensor.key];
+              return (
+                <MetricCard
+                  key={sensor.key}
+                  label={sensor.label}
+                  value={val !== undefined ? val.toFixed(sensor.decimals) : "—"}
+                  unit={sensor.unit}
+                  icon={sensor.icon}
+                  color={sensor.color}
+                  subtext={sensor.subtext}
+                />
+              );
+            })}
+          </div>
+        </div>
+        
+        <div className="grid gap-4 rounded-xl bg-gray-900/70 p-4">
+            {SENSOR_REGISTRY.map((sensor) => (
+              <SparklineChart
+              key={sensor.key}
+              data={telemetry.histories[sensor.key] ?? []}
+              color={sensor.color}
+              label={`${sensor.label} histórico`}
+              unit={sensor.unit}
+              height={80}
+            />
+          ))}
+          </div>
+    </div>
 
       <div className="bg-gray-900 rounded-xl border border-gray-800 shadow-lg p-4">
-        <h2 className="text-lg font-semibold mb-4 text-purple-400">Actuadores</h2>
         {ACTUATOR_REGISTRY.map((actuator) => (
-          <div key={actuator.key} className="bg-gray-800 rounded-lg p-4 flex flex-col gap-4">
-            <div className="flex justify-between items-center">
-              <h3 className="font-semibold">{actuator.label}</h3>
-              <span className="text-lg">{servo}{actuator.unit}</span>
-            </div>
-
-            <input
-              type="range"
-              min={actuator.min}
-              max={actuator.max}
-              value={servo}
-              onChange={(e) => setServo(Number(e.target.value))}
-              onMouseMove={(e) => {
-                if ((e.buttons & 1) === 1) {
-                  sendServo(Number((e.target as HTMLInputElement).value));
-                }
-              }}
-              onTouchMove={(e) => {
-                const target = e.target as HTMLInputElement;
-                sendServo(Number(target.value));
-              }}
-              onMouseUp={(e) => sendServo(Number((e.target as HTMLInputElement).value))}
-              className="w-full accent-purple-500"
-            />
-
-            <div className="flex flex-wrap gap-2">
-              {actuator.presets.map((preset) => (
-                <button
-                  key={preset.value}
-                  onClick={() => sendServo(preset.value)}
-                  className="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 rounded transition"
-                >
-                  {preset.label}
-                </button>
-              ))}
-            </div>
-          </div>
+          <ActuatorPanel
+            key={actuator.key}
+            config={actuator}
+            currentValue={actuatorValues[actuator.key] ?? actuator.min}
+            onSend={sendActuator}
+          />
         ))}
       </div>
 
@@ -366,7 +358,6 @@ const sendServo = (value: number) => {
           </button>
         </div>
 
-z
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 font-mono text-sm">
           <div className="bg-emerald-500/10 p-3 rounded">
             <strong>act:</strong> {response?.act ?? "—"}
@@ -419,6 +410,138 @@ function StatusBar({ connected, latency }: { connected: boolean; latency: number
           </span>
         )}
         <span className="text-slate-500">{now()}</span>
+      </div>
+    </div>
+  );
+}
+
+function ActuatorPanel({
+  config,
+  currentValue,
+  onSend,
+}: {
+  config: (typeof ACTUATOR_REGISTRY)[number];
+  currentValue: number;
+  onSend: (key: ActuatorKey, value: number) => void;
+}) {
+  const [localVal, setLocalVal] = useState(currentValue);
+  useEffect(() => setLocalVal(currentValue), [currentValue]);
+
+  const { key, label, min, max, unit, color, presets } = config;
+  const normalized = (clamp(currentValue, min, max) - min) / (max - min);
+
+  const isArc = min === 0 && max === 180;
+
+  const cx = 60;
+  const cy = 65;
+  const r = 45;
+  const servoThumbAngle = ((clamp(localVal, min, max) - min) / (max - min) * Math.PI) - Math.PI;
+  const stx = cx + r * Math.cos(servoThumbAngle);
+  const sty = cy + r * Math.sin(servoThumbAngle);
+
+  return (
+    <div className="bg-slate-900 border border-slate-800 rounded-xl px-5 py-4.5 flex flex-col gap-3.5">
+      <div className="flex justify-between items-center">
+        <span className="text-[11px] text-slate-500 tracking-[0.08em] uppercase font-mono">
+          Control — {label}
+        </span>
+        <span className="text-[22px] font-extrabold font-mono" style={{ color }}>
+          {currentValue}
+          {unit}
+        </span>
+      </div>
+
+      {isArc ? (
+        <div className="flex justify-center">
+          <svg width={120} height={75} viewBox="0 0 120 75">
+            <path
+              d="M 15 65 A 45 45 0 0 1 105 65"
+              stroke="#1e293b"
+              strokeWidth={8}
+              fill="none"
+              strokeLinecap="round"
+            />
+            <path
+              d={`M 15 65 A 45 45 0 0 1 ${stx} ${sty}`}
+              stroke={color}
+              strokeWidth={4}
+              fill="none"
+              strokeLinecap="round"
+            />
+            <circle cx={stx} cy={sty} r={6} fill={color} />
+            <circle cx={60} cy={65} r={5} fill="#334155" />
+            <text x={10} y={75} fontSize={9} fill="#334155">
+              {min}°
+            </text>
+            <text x={96} y={75} fontSize={9} fill="#334155">
+              {max}°
+            </text>
+          </svg>
+        </div>
+      ) : (
+        <div className="h-2 bg-slate-800 rounded overflow-hidden">
+          <div
+            className="h-full rounded transition-[width] duration-200"
+            style={{ width: `${normalized * 100}%`, background: color }}
+          />
+        </div>
+      )}
+
+      <input
+        type="range"
+        min={min}
+        max={max}
+        value={localVal}
+        onChange={(e) => {
+          const v = Number(e.target.value);
+          setLocalVal(v);
+          onSend(key, v);
+        }}
+        className="w-full"
+        style={{ accentColor: color }}
+      />
+
+      <div className="flex gap-1.5 flex-wrap">
+        {presets.map((p) => (
+          <button
+            key={p.value}
+            onClick={() => {
+              setLocalVal(p.value);
+              onSend(key, p.value);
+            }}
+            className="flex-1 py-1.5 rounded-lg text-xs font-mono cursor-pointer transition-colors"
+            style={{
+              background: currentValue === p.value ? `${color}22` : "transparent",
+              border: `1px solid ${currentValue === p.value ? color : "#1e293b"}`,
+              color: currentValue === p.value ? color : "#64748b",
+            }}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex gap-2">
+        <input
+          type="number"
+          min={min}
+          max={max}
+          value={localVal}
+          onChange={(e) => setLocalVal(Number(e.target.value))}
+          className="flex-1 bg-[#020617] border border-slate-800 rounded-lg px-3 py-2 font-mono text-[15px] outline-none"
+          style={{ color }}
+        />
+        <button
+          onClick={() => onSend(key, localVal)}
+          className="px-4 py-2 rounded-lg font-semibold cursor-pointer text-[13px] transition-opacity hover:opacity-80"
+          style={{
+            background: color + "33",
+            border: `1px solid ${color}66`,
+            color,
+          }}
+        >
+          Enviar
+        </button>
       </div>
     </div>
   );
