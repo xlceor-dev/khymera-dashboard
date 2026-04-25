@@ -22,3 +22,5 @@ const initialTelemetryState: TelemetryState = {
 };
 
 type ActuatorValues = Partial<Record<ActuatorKey, number>>;
+type AIResponse = { act: string; inst: string; mess: string };
+type LogEntry = { time: string; type: "info" | "warn" | "error" | "ai"; message: string };

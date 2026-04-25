@@ -4,6 +4,7 @@ import { useRef as useMediaRef } from "react";
 import MetricCard from "./components/metricCard";
 import OpenAI from "openai";
 import SparklineChart from "./components/sparklineChart";
+import AssistantPanel from "./components/asistantPanel";
 
 
 const OPENAI_API_KEY = ""; 
@@ -89,33 +90,6 @@ function telemetryReducer(state:TelemetryState, action:TelemetryAction) : Teleme
     return {values:newValues, histories: newHistories}
 }
 
-const sendMessage = async ({instructions, input, openai, setResponse, sendServo}:{instructions:string, input:string, openai: OpenAI, setResponse(response:string):void, sendServo(value: number): void }) => {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o", 
-      messages: [{ role: "system", content: instructions }, { role: "user", content: input }],
-    });
-    const res = completion.choices[0].message;
-    if (!res.content) return;
-    
-    console.log(res);
-
-    let data;
-    
-    try {
-      data = JSON.parse(res.content);
-    } catch (e) {
-      console.error("AI error", res.content);
-      return;
-    }
-    
-    setResponse(data);
-    
-    if (data.act === "servo") {
-      if (data.inst !== "") {
-        sendServo(Number(data.inst));
-      }
-    }
-  };
 
   function clamp(val: number, min: number, max: number) {
     return Math.min(Math.max(val, min), max);
@@ -125,10 +99,11 @@ const sendMessage = async ({instructions, input, openai, setResponse, sendServo}
 export default function Dashboard() {
     const sseRef = useRef<EventSource | null>(null);
     const lastSentRef = useRef(0);
-  const [servo, setServo] = useState(90);
-  const [input, setInput] = useState('Mueve el servo a 90 grados');
+  const [input, setInput] = useState('');
   const [response, setResponse] = useState<any | null>(null);
   const [connected, setConnected] = useState(false)
+  const [loading, setLoading] = useState(false);
+  const [visible, setVisible] = useState(true)
   const [telemetry, dispatchTelemetry] = useReducer(telemetryReducer, initialTelemetryState)
   // const [inst, setInst] = useState(90)
 
@@ -139,10 +114,88 @@ export default function Dashboard() {
   const [recording, setRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const [log, setLog] = useState<LogEntry[]>([]);
 
-  const instructions = 'Eres un asistente en un dashboard que controla un sistema de servos. Se amable, servicial, y util. Puedes responder dudas generales, dudas relacionadas al sistema, o controlar los servomotores. Debes responder en este formato: {"act":"", "inst":"", "mess":""}. En act, puedes usar "none" para no realizar una accion, o "servo" para controlar el servomotor. si usas "servo", en inst:"" debes poner el angulo deseado entre 0 y 180 grados. Si el usuario desea un valor que no entre en ese rango, debes usar "none" y informar que la accion es imposible de realizar, y por que. Al usar "none", puedes dejar inst vacio. Por ultimo, en mess:"" debes dejar un comentario, ya sea respondiendo una consulta o informando lo que se hizo de elegir "servo". Responde solo en JSON valido'
-
+  function buildAIInstructions(): string {
+    const actuatorDescriptions = ACTUATOR_REGISTRY.map(
+      (a) => `"${a.aiAction}" para controlar ${a.label} (rango ${a.min}–${a.max}${a.unit})`
+    ).join(", ");
+  
+    return `Eres un asistente en un dashboard que controla hardware embebido. Sé amable y útil. Puedes responder dudas o controlar actuadores. Responde SOLO en este JSON válido: {"act":"", "inst":"", "mess":""}. En "act" usa: "none" para no actuar, o uno de estos valores para controlar un actuador: ${actuatorDescriptions}. En "inst" pon el valor numérico deseado (deja vacío si act es "none"). En "mess" deja un comentario breve. Si el valor está fuera de rango, usa "none" e informa por qué.`;
+  }
   const openai = new OpenAI({ apiKey: OPENAI_API_KEY, dangerouslyAllowBrowser: true });
+
+  const addLog = useCallback((type: LogEntry["type"], message: string) => {
+    setLog((prev) => [...prev.slice(-99), { time: now(), type, message }]);
+  }, []);
+
+  const sendActuator = useCallback(
+    (key: ActuatorKey, rawValue: number) => {
+      const config = ACTUATOR_REGISTRY.find((a) => a.key === key);
+      if (!config) return;
+      const value = clamp(rawValue, config.min, config.max);
+
+      setActuatorValues((prev) => ({ ...prev, [key]: value }));
+
+      fetch(`${ESP32_URL}/${key}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ [key]: value }),
+      })
+        .then(() => {
+          console.log("info", `${config.label} → ${value}${config.unit}`);
+        })
+        .catch(() => {
+          console.log("error", `${config.label} fallo al enviarse`);
+        });
+    },
+    []
+  );
+
+  const sendServo = (value: number) => {
+    const now = Date.now();
+    if (now - lastSentRef.current < 100) return;
+    lastSentRef.current = now;
+    sendActuator("servo", value);
+  };
+
+  const processAIResponse = useCallback(
+    async (userText: string) => {
+      setLoading(true);
+      try {
+        const completion = await openai.chat.completions.create({
+          model: "gpt-4o",
+          messages: [
+            { role: "system", content: buildAIInstructions() },
+            { role: "user", content: userText },
+          ],
+        });
+        const content = completion.choices[0].message.content;
+        if (!content) return;
+
+        const data: AIResponse = JSON.parse(content);
+        setResponse(data);
+        addLog("ai", `IA: "${data.mess?.slice(0, 60)}${(data.mess?.length ?? 0) > 60 ? "…" : ""}"`);
+
+        const matchedActuator = ACTUATOR_REGISTRY.find((a) => a.aiAction === data.act);
+        if (matchedActuator && data.inst !== "") {
+          sendActuator(matchedActuator.key, Number(data.inst));
+        }
+      } catch {
+        addLog("error", "Error en la llamada a la IA");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [sendActuator, addLog]
+  );
+
+  const sendMessage = () => {
+    if (!input.trim()) return;
+    processAIResponse(input);
+  };
   
 
   const handleVoice = async () => {
@@ -177,7 +230,7 @@ export default function Dashboard() {
         const completion = await openai.chat.completions.create({
           model: "gpt-4o",
           messages: [
-            { role: "system", content: instructions },
+            { role: "system", content: buildAIInstructions() },
             { role: "user", content: text },
           ],
         });
@@ -249,37 +302,7 @@ useEffect(() => {
   }, []);
 
   
-  const sendActuator = useCallback(
-    (key: ActuatorKey, rawValue: number) => {
-      const config = ACTUATOR_REGISTRY.find((a) => a.key === key);
-      if (!config) return;
-      const value = clamp(rawValue, config.min, config.max);
 
-      setActuatorValues((prev) => ({ ...prev, [key]: value }));
-
-      fetch(`${ESP32_URL}/${key}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ [key]: value }),
-      })
-        .then(() => {
-          console.log("info", `${config.label} → ${value}${config.unit}`);
-        })
-        .catch(() => {
-          console.log("error", `${config.label} fallo al enviarse`);
-        });
-    },
-    []
-  );
-
-  const sendServo = (value: number) => {
-    const now = Date.now();
-    if (now - lastSentRef.current < 100) return;
-    lastSentRef.current = now;
-    sendActuator("servo", value);
-  };
   return (
   <div className="min-h-screen bg-gray-950 text-white  font-sans">
 
@@ -320,7 +343,7 @@ useEffect(() => {
           ))}
           </div>
     </div>
-
+    <div className="grid items-start gap-5">
       <div className="bg-gray-900 rounded-xl border border-gray-800 shadow-lg p-4">
         {ACTUATOR_REGISTRY.map((actuator) => (
           <ActuatorPanel
@@ -331,47 +354,27 @@ useEffect(() => {
           />
         ))}
       </div>
-
-      <div className="bg-gray-900 rounded-xl border border-gray-800 shadow-lg p-4 md:col-span-2">
-        <h2 className="text-lg font-semibold mb-4 text-cyan-400">Asistente</h2>
-
-        <textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Escribe una instrucción..."
-          className="w-full h-28 p-3 bg-gray-800 rounded-lg font-mono mb-3 resize-none outline-none focus:ring-2 focus:ring-cyan-500"
-        />
-
-        <div className="flex gap-3 mb-4">
-          <button
-            onClick={() => sendMessage({instructions, input, openai, setResponse, sendServo})}
-            className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 rounded transition"
-          >
-            Enviar
-          </button>
-
-          <button
-            onClick={handleVoice}
-            className={`px-4 py-2 rounded transition ${recording ? "bg-red-600 hover:bg-red-500" : "bg-green-600 hover:bg-green-500"}`}
-          >
-            {recording ? "Detener" : "Hablar"}
-          </button>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 font-mono text-sm">
-          <div className="bg-emerald-500/10 p-3 rounded">
-            <strong>act:</strong> {response?.act ?? "—"}
-          </div>
-          <div className="bg-amber-500/10 p-3 rounded">
-            <strong>inst:</strong> {response?.inst ?? "—"}
-          </div>
-          <div className="bg-blue-500/10 p-3 rounded md:col-span-3">
-            <strong>mess:</strong> {response?.mess ?? "—"}
-          </div>
-        </div>
-      </div>
+      <LogPanel entries={log} />
+    </div>
+    <button className=" flex p-5 bg-black rounded-full w-14 h-14 items-center justify-center fixed bottom-10 right-10 border border-white/20" onClick={() => setVisible(!visible)}>
+      o
+    </button>
 
     </div>
+      {visible &&     
+      <div className=" transform-cpu transition-all duration-300">
+        <div className="fixed bottom-28 right-20 w-xl shadow-2xl">
+          <AssistantPanel
+            onSendText={sendMessage}
+            onVoice={handleVoice}
+            recording={recording}
+            response={response}
+            loading={loading}
+            input={input}
+            setInput={setInput}
+          />
+      </div>
+      </div>}
   </div>
 );
 }
@@ -542,6 +545,58 @@ function ActuatorPanel({
         >
           Enviar
         </button>
+      </div>
+    </div>
+  );
+}
+
+function LogPanel({ entries }: { entries: LogEntry[] }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.scrollTop = ref.current.scrollHeight;
+  }, [entries]);
+
+  const colorMap = {
+    info: "#38bdf8",
+    warn: "#f59e0b",
+    error: "#ef4444",
+    ai: "#a78bfa",
+  };
+
+  const borderColorMap = {
+    info: "#38bdf822",
+    warn: "#f59e0b22",
+    error: "#ef444422",
+    ai: "#a78bfa22",
+  };
+
+  return (
+    <div className="bg-slate-900 border border-slate-800 rounded-xl flex flex-col overflow-hidden min-h-48">
+      <div className="px-4 py-3 border-b border-slate-800 flex justify-between">
+        <span className="text-[11px] text-slate-500 tracking-[0.08em] uppercase font-mono">
+          Log de actividad
+        </span>
+        <span className="text-[10px] text-slate-700 font-mono">{entries.length} entradas</span>
+      </div>
+      <div ref={ref} className="max-h-45 overflow-y-auto py-2">
+        {entries.length === 0 && (
+          <div className="px-4 py-3 text-slate-700 text-xs font-mono">
+            Esperando eventos...
+          </div>
+        )}
+        {entries.map((e, i) => (
+          <div
+            key={i}
+            className="flex gap-2.5 px-4 py-1 text-xs font-mono"
+            style={{ borderLeft: `2px solid ${borderColorMap[e.type]}` }}
+          >
+            <span className="text-slate-700 min-w-17.5 shrink-0">{e.time}</span>
+            <span className="min-w-10 shrink-0" style={{ color: colorMap[e.type] }}>
+              [{e.type.toUpperCase()}]
+            </span>
+            <span className="text-slate-400 leading-relaxed">{e.message}</span>
+          </div>
+        ))}
       </div>
     </div>
   );
