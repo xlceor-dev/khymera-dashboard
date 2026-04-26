@@ -24,3 +24,33 @@ const initialTelemetryState: TelemetryState = {
 type ActuatorValues = Partial<Record<ActuatorKey, number>>;
 type AIResponse = { act: string; inst: string; mess: string };
 type LogEntry = { time: string; type: "info" | "warn" | "error" | "ai"; message: string };
+
+interface Sensor {
+    key: string;
+    label: string;
+    unit: string;
+    icon: string;
+    color: string;
+    decimals: number;
+    subtext: string;
+  };
+
+type SensorRegistry = Sensor[];
+
+interface ActuatorPreset {
+    label: string;
+    value: number;
+  }
+  
+  interface Actuator {
+    key: string;
+    label: string;
+    min: number;
+    max: number;
+    unit: string;
+    color: string;
+    presets: ActuatorPreset[];
+    aiAction: string;
+  }
+  
+  type ActuatorRegistry =  Actuator[];

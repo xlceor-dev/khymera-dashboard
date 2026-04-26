@@ -2,43 +2,54 @@
 import { useEffect, useState, useRef, useReducer, useCallback } from "react"; 
 import { useRef as useMediaRef } from "react";
 import MetricCard from "./components/metricCard";
-import OpenAI from "openai";
 import SparklineChart from "./components/sparklineChart";
 import AssistantPanel from "./components/asistantPanel";
 
 
-const OPENAI_API_KEY = ""; 
 const MAX_HISTORY = 60;  
 
 const initialTelemetryState: TelemetryState = {
   values: {},
   histories: {},
 };
+  function now() {
+    return new Date().toLocaleTimeString("es-MX", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  }
 
-const SENSOR_REGISTRY = [
-  {
-    key: "temp",
-    label: "Temperatura",
-    unit: "°C",
-    icon: "🌡",
-    color: "#f97316",
-    decimals: 1,
-    subtext: undefined as string | undefined,
-  },
-  {
-    key: "adc",
-    label: "ADC",
-    unit: "",
-    icon: "⚡",
-    color: "#38bdf8",
-    decimals: 0,
-    subtext: "0 – 4095",
-  },
-] as const;
+function telemetryReducer(state:TelemetryState, action:TelemetryAction) : TelemetryState{
+    if(action.type != "UPDATE") return state
 
-type SensorKey = (typeof SENSOR_REGISTRY)[number]["key"];
+    const t = Date.now();
+    const newValues = { ...state.values }
+    const newHistories = { ...state.histories }
 
-const ACTUATOR_REGISTRY = [
+    for (const key in action.payload) {
+      const raw = action.payload[key];
+      if (raw === undefined) continue;
+    
+      const value = Number(raw);
+    
+      newValues[key] = value;
+      const prevHistories = newHistories[key] ?? [];
+    
+      newHistories[key] = [
+        ...prevHistories.slice(-(MAX_HISTORY - 1)),
+        { t, value }
+      ];
+    }
+    return {values:newValues, histories: newHistories}
+}
+
+
+  function clamp(val: number, min: number, max: number) {
+    return Math.min(Math.max(val, min), max);
+  }
+
+  const ACTUATOR_REGISTRY = [
     {
       key: "servo",
       label: "Servo",
@@ -57,58 +68,21 @@ const ACTUATOR_REGISTRY = [
     },
   ] as const;
   
-
-  function now() {
-    return new Date().toLocaleTimeString("es-MX", {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    });
-  }
-
-function telemetryReducer(state:TelemetryState, action:TelemetryAction) : TelemetryState{
-    if(action.type != "UPDATE") return state
-
-    const t = Date.now();
-    const newValues = { ...state.values }
-    const newHistories = { ...state.histories }
-
-    for(const sensor of  SENSOR_REGISTRY){
-        const raw = action.payload[sensor.key]
-        if (raw == undefined) continue
-
-        const value = Number(raw)
-
-        newValues[sensor.key] = value
-        const prevHistories = newHistories[sensor.key] ?? []
-
-        newHistories[sensor.key] = [
-            ...prevHistories.slice(-(MAX_HISTORY - 1)),
-            {t, value}
-        ]
-    }
-    return {values:newValues, histories: newHistories}
-}
-
-
-  function clamp(val: number, min: number, max: number) {
-    return Math.min(Math.max(val, min), max);
-  }
-
-
 export default function Dashboard() {
-    const sseRef = useRef<EventSource | null>(null);
-    const lastSentRef = useRef(0);
+  const sseRef = useRef<EventSource | null>(null);
+  const lastSentRef = useRef(0);
   const [input, setInput] = useState('');
   const [response, setResponse] = useState<any | null>(null);
   const [connected, setConnected] = useState(false)
   const [loading, setLoading] = useState(false);
   const [visible, setVisible] = useState(true)
+  const [sensors, setSensors] = useState<Sensor[]>([]);
+  const [actuators, setActuators] = useState<any[]>([]);
   const [telemetry, dispatchTelemetry] = useReducer(telemetryReducer, initialTelemetryState)
-  // const [inst, setInst] = useState(90)
+
 
   const [actuatorValues, setActuatorValues] = useState<ActuatorValues>(() =>
-    Object.fromEntries(ACTUATOR_REGISTRY.map((a) => [a.key, Math.round((a.max - a.min) / 2)]))
+    Object.fromEntries(actuators.map((a) => [a.key, Math.round((a.max - a.min) / 2)]))
   );
 
   const [recording, setRecording] = useState(false);
@@ -116,40 +90,19 @@ export default function Dashboard() {
   const audioChunksRef = useRef<Blob[]>([]);
   const [log, setLog] = useState<LogEntry[]>([]);
 
-  function buildAIInstructions(): string {
-    const actuatorDescriptions = ACTUATOR_REGISTRY.map(
-      (a) => `"${a.aiAction}" para controlar ${a.label} (rango ${a.min}–${a.max}${a.unit})`
-    ).join(", ");
-  
-    return `Eres un asistente en un dashboard que controla hardware embebido. Sé amable y útil. Puedes responder dudas o controlar actuadores. Responde SOLO en este JSON válido: {"act":"", "inst":"", "mess":""}. En "act" usa: "none" para no actuar, o uno de estos valores para controlar un actuador: ${actuatorDescriptions}. En "inst" pon el valor numérico deseado (deja vacío si act es "none"). En "mess" deja un comentario breve. Si el valor está fuera de rango, usa "none" e informa por qué.`;
-  }
-  const openai = new OpenAI({ apiKey: OPENAI_API_KEY, dangerouslyAllowBrowser: true });
-
   const addLog = useCallback((type: LogEntry["type"], message: string) => {
     setLog((prev) => [...prev.slice(-99), { time: now(), type, message }]);
   }, []);
 
   const sendActuator = useCallback(
-    (key: ActuatorKey, rawValue: number) => {
-      const config = ACTUATOR_REGISTRY.find((a) => a.key === key);
-      if (!config) return;
-      const value = clamp(rawValue, config.min, config.max);
-
-      setActuatorValues((prev) => ({ ...prev, [key]: value }));
-
-      fetch(`${ESP32_URL}/${key}`, {
+   async (key: ActuatorKey, value: number) => {
+     await fetch("/api/actuator", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ [key]: value }),
-      })
-        .then(() => {
-          console.log("info", `${config.label} → ${value}${config.unit}`);
-        })
-        .catch(() => {
-          console.log("error", `${config.label} fallo al enviarse`);
-        });
+        body: JSON.stringify({ key, value }),
+      });
     },
     []
   );
@@ -165,26 +118,25 @@ export default function Dashboard() {
     async (userText: string) => {
       setLoading(true);
       try {
-        const completion = await openai.chat.completions.create({
-          model: "gpt-4o",
-          messages: [
-            { role: "system", content: buildAIInstructions() },
-            { role: "user", content: userText },
-          ],
+        const res = await fetch("/api/assistant", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ input: userText }),
         });
-        const content = completion.choices[0].message.content;
-        if (!content) return;
-
-        const data: AIResponse = JSON.parse(content);
+  
+        const data: AIResponse = await res.json();
+  
         setResponse(data);
         addLog("ai", `IA: "${data.mess?.slice(0, 60)}${(data.mess?.length ?? 0) > 60 ? "…" : ""}"`);
-
-        const matchedActuator = ACTUATOR_REGISTRY.find((a) => a.aiAction === data.act);
+  
+        const matchedActuator = actuators.find((a) => a.aiAction === data.act);
         if (matchedActuator && data.inst !== "") {
           sendActuator(matchedActuator.key, Number(data.inst));
         }
       } catch {
-        addLog("error", "Error en la llamada a la IA");
+        addLog("error", "Error en la API del asistente");
       } finally {
         setLoading(false);
       }
@@ -219,35 +171,19 @@ export default function Dashboard() {
       const file = new File([audioBlob], "voice.webm", { type: "audio/webm" });
 
       try {
-        const transcription = await openai.audio.transcriptions.create({
-          file,
-          model: "whisper-1",
+        const formData = new FormData();
+        formData.append("file", file);
+        
+        const res = await fetch("/api/assistant/voice", {
+          method: "POST",
+          body: formData,
         });
-
-        const text = transcription.text;
-        setInput(text);
-
-        const completion = await openai.chat.completions.create({
-          model: "gpt-4o",
-          messages: [
-            { role: "system", content: buildAIInstructions() },
-            { role: "user", content: text },
-          ],
-        });
-
-        const res = completion.choices[0].message;
-        if (!res.content) return;
-
-        let data;
-        try {
-          data = JSON.parse(res.content);
-        } catch (e) {
-          console.error("Whisper Error", res.content);
-          return;
-        }
-
+        
+        const data = await res.json();
+        
+        setInput(data.transcript || "");
         setResponse(data);
-
+        
         if (data.act === "servo" && data.inst !== "") {
           sendServo(Number(data.inst));
         }
@@ -260,15 +196,27 @@ export default function Dashboard() {
     setRecording(true);
   };
 
-const ESP32_URL = "http://192.168.0.159";
+  useEffect(() => {
+    fetch("/api/sensor")
+      .then(res => res.json())
+      .then(data => setSensors(data.sensors))
+      .catch(() => console.error("Error cargando sensores"));
+  }, []);
 
+
+  useEffect(() => {
+    fetch("/api/actuator")
+      .then(res => res.json())
+      .then(data => setActuators(data.actuators || []))
+      .catch(() => console.error("Error cargando actuadores"));
+  }, []);
 
 useEffect(() => {
     let active = true;
   
     const connect = () => {
       sseRef.current?.close();
-      const es = new EventSource(`${ESP32_URL}/events`);
+      const es = new EventSource(`http://192.168.0.15/events`);
       sseRef.current = es;
   
       es.onopen = () => {
@@ -300,52 +248,55 @@ useEffect(() => {
       sseRef.current?.close();
     };
   }, []);
+  
+
 
   
 
   return (
-  <div className="min-h-screen bg-gray-950 text-white  font-sans">
+  <div className="min-h-screen bg-gray-950 text-sm text-white  font-sans">
 
     <StatusBar connected={connected} latency={0} />
 
     <div className="grid grid-cols-1 md:grid-cols-2 px-4 gap-6">
 
     <div className="grid gap-3">
-      <div className="rounded-xl bg-gray-900/70 p-4 ">
+      <div className="rounded-xl  p-4 ">
           <div className="grid grid-cols-2 gap-4 ">
-          {SENSOR_REGISTRY.map((sensor) => {
-              const val = telemetry.values[sensor.key];
-              return (
-                <MetricCard
-                  key={sensor.key}
-                  label={sensor.label}
-                  value={val !== undefined ? val.toFixed(sensor.decimals) : "—"}
-                  unit={sensor.unit}
-                  icon={sensor.icon}
-                  color={sensor.color}
-                  subtext={sensor.subtext}
-                />
-              );
-            })}
+          {sensors.map((sensor) => {
+            const val = telemetry.values[sensor.key];
+
+            return (
+              <MetricCard
+                key={sensor.key}
+                label={sensor.label}
+                value={val !== undefined ? val.toFixed(sensor.decimals ?? 0) : "—"}
+                unit={sensor.unit}
+                icon={sensor.icon}
+                color={sensor.color}
+                subtext={sensor.subtext}
+              />
+            );
+          })}
           </div>
         </div>
-        
-        <div className="grid gap-4 rounded-xl bg-gray-900/70 p-4">
-            {SENSOR_REGISTRY.map((sensor) => (
+
+        <div className="grid gap-4 rounded-xl p-4">
+            {sensors.map((sensor) => (
               <SparklineChart
-              key={sensor.key}
-              data={telemetry.histories[sensor.key] ?? []}
-              color={sensor.color}
-              label={`${sensor.label} histórico`}
-              unit={sensor.unit}
-              height={80}
-            />
-          ))}
+                key={sensor.key}
+                data={telemetry.histories[sensor.key] ?? []}
+                color={sensor.color}
+                label={`${sensor.label} histórico`}
+                unit={sensor.unit}
+                height={80}
+              />
+            ))}
           </div>
     </div>
     <div className="grid items-start gap-5">
-      <div className="bg-gray-900 rounded-xl border border-gray-800 shadow-lg p-4">
-        {ACTUATOR_REGISTRY.map((actuator) => (
+      <div className=" rounded-xl  shadow-lg pt-4">
+        {actuators.map((actuator) => (
           <ActuatorPanel
             key={actuator.key}
             config={actuator}
@@ -397,11 +348,11 @@ function StatusBar({ connected, latency }: { connected: boolean; latency: number
         />
         
         <span
-          className={`text-[13px] font-semibold tracking-[0.05em] ${
+          className={` font-semibold tracking-[0.05em] ${
             connected ? "text-green-300" : "text-red-300"
           }`}
         >
-            <h1 className="text-3xl font-bold tracking-tight">Khymera Dashboard</h1>
+            <h1 className="text-xl font-bold tracking-tight">Khymera Dashboard</h1>
           {connected ? "ESP32 CONECTADO" : "SIN CONEXIÓN — REINTENTANDO..."}
         </span>
         
@@ -423,7 +374,7 @@ function ActuatorPanel({
   currentValue,
   onSend,
 }: {
-  config: (typeof ACTUATOR_REGISTRY)[number];
+  config: (ActuatorRegistry)[number];
   currentValue: number;
   onSend: (key: ActuatorKey, value: number) => void;
 }) {
