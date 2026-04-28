@@ -17,7 +17,7 @@
     setInput: (v: string) => void;
   }) {
     return (
-      <div className="bg-slate-900 border border-slate-800 rounded-xl px-5 py-4.5 flex flex-col gap-3.5">
+      <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-xl px-5 py-4.5 flex flex-col gap-3.5 shadow-lg">
         <span className="text-[11px] text-slate-500 tracking-[0.08em] uppercase font-mono">
           Asistente IA
         </span>
@@ -33,7 +33,7 @@
           }}
           placeholder="Escribe una instrucción... (Enter para enviar)"
           rows={3}
-          className="bg-[#020617] border border-slate-800 rounded-lg text-slate-200 px-3.5 py-2.5 font-mono text-[13px] resize-y outline-none"
+          className="bg-gray-100 dark:bg-[#020617] border border-gray-300 dark:border-slate-800 rounded-lg text-gray-900 dark:text-slate-200 px-3.5 py-2.5 font-mono text-[13px] resize-y outline-none"
         />
   
         <div className="flex gap-2">

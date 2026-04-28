@@ -15,9 +15,9 @@ export default function MetricCard({
     subtext?: string;
   }) {
     return (
-      <div className="bg-slate-900 border border-slate-800 rounded-xl px-5 py-4 flex flex-col gap-1.5 min-w-0">
+      <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-xl px-5 py-4 flex flex-col gap-1.5 min-w-0 shadow-sm hover:shadow-md hover:bg-gray-50 dark:hover:bg-slate-800 transition">
         <div className="flex justify-between items-center">
-          <span className="text-[11px] text-slate-500 tracking-[0.08em] uppercase font-mono">
+          <span className="text-[11px] text-gray-500 dark:text-slate-500 tracking-[0.08em] uppercase font-mono">
             {label}
           </span>
           <span className="text-lg">{icon}</span>
@@ -29,9 +29,9 @@ export default function MetricCard({
           >
             {value}
           </span>
-          {unit && <span className="text-sm text-slate-500">{unit}</span>}
+          {unit && <span className="text-sm text-gray-500 dark:text-slate-500">{unit}</span>}
         </div>
-        {subtext && <span className="text-[11px] text-slate-500">{subtext}</span>}
+        {subtext && <span className="text-[11px] text-gray-500 dark:text-slate-500">{subtext}</span>}
       </div>
     );
   }

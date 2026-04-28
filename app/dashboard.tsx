@@ -6,6 +6,38 @@ import SparklineChart from "./components/sparklineChart";
 import AssistantPanel from "./components/asistantPanel";
 
 
+function useTheme() {
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    if (typeof window === "undefined") return "dark";
+    const saved = localStorage.getItem("theme");
+    if (saved === "light" || saved === "dark") return saved;
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  });
+
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+  
+    const handler = (e: MediaQueryListEvent) => {
+      const saved = localStorage.getItem("theme");
+      if (!saved) {
+        setTheme(e.matches ? "dark" : "light");
+      }
+    };
+  
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", theme === "dark");
+    localStorage.setItem("theme", theme);
+  }, [theme]);
+
+  return { theme, setTheme };
+  
+}
+
+
 const MAX_HISTORY = 60;  
 
 const initialTelemetryState: TelemetryState = {
@@ -49,24 +81,6 @@ function telemetryReducer(state:TelemetryState, action:TelemetryAction) : Teleme
     return Math.min(Math.max(val, min), max);
   }
 
-  const ACTUATOR_REGISTRY = [
-    {
-      key: "servo",
-      label: "Servo",
-      min: 0,
-      max: 180,
-      unit: "°",
-      color: "#a78bfa",
-      presets: [
-        { label: "0°", value: 0 },
-        { label: "45°", value: 45 },
-        { label: "90°", value: 90 },
-        { label: "135°", value: 135 },
-        { label: "180°", value: 180 },
-      ],
-      aiAction: "servo",
-    },
-  ] as const;
   
 export default function Dashboard() {
   const sseRef = useRef<EventSource | null>(null);
@@ -89,6 +103,8 @@ export default function Dashboard() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const [log, setLog] = useState<LogEntry[]>([]);
+
+  const { theme, setTheme } = useTheme();
 
   const addLog = useCallback((type: LogEntry["type"], message: string) => {
     setLog((prev) => [...prev.slice(-99), { time: now(), type, message }]);
@@ -216,7 +232,7 @@ useEffect(() => {
   
     const connect = () => {
       sseRef.current?.close();
-      const es = new EventSource(`http://192.168.0.15/events`);
+      const es = new EventSource(`http://192.168.4.1/events`);
       sseRef.current = es;
   
       es.onopen = () => {
@@ -254,9 +270,9 @@ useEffect(() => {
   
 
   return (
-  <div className="min-h-screen bg-gray-950 text-sm text-white  font-sans">
+  <div className="min-h-screen bg-white dark:bg-gray-950 text-gray-900 dark:text-white text-sm font-sans transition-colors">
 
-    <StatusBar connected={connected} latency={0} />
+    <StatusBar connected={connected} latency={0} theme={theme} setTheme={setTheme} />
 
     <div className="grid grid-cols-1 md:grid-cols-2 px-4 gap-6">
 
@@ -329,13 +345,23 @@ useEffect(() => {
   </div>
 );
 }
-function StatusBar({ connected, latency }: { connected: boolean; latency: number }) {
+function StatusBar({
+  connected,
+  latency,
+  theme,
+  setTheme,
+}: {
+  connected: boolean;
+  latency: number;
+  theme: "light" | "dark";
+  setTheme: (t: "light" | "dark") => void;
+}) {
   return (
     <div
       className={`flex items-center justify-between px-5 py-2.5 border-b mb-5 font-mono ${
         connected
-          ? "bg-[#0d3320] border-[#1a6b44]"
-          : "bg-[#3a0d0d] border-[#6b1a1a]"
+          ? "bg-green-100 dark:bg-[#0d3320] border-green-300 dark:border-[#1a6b44]"
+          : "bg-red-100 dark:bg-[#3a0d0d] border-red-300 dark:border-[#6b1a1a]"
       }`}
     >
       <div className="flex items-center gap-2.5">
@@ -346,16 +372,14 @@ function StatusBar({ connected, latency }: { connected: boolean; latency: number
               : "bg-red-500 shadow-[0_0_8px_#ef4444]"
           }`}
         />
-        
         <span
           className={` font-semibold tracking-[0.05em] ${
             connected ? "text-green-300" : "text-red-300"
           }`}
         >
-            <h1 className="text-xl font-bold tracking-tight">Khymera Dashboard</h1>
+          <h1 className="text-xl font-bold tracking-tight">Khymera Dashboard</h1>
           {connected ? "ESP32 CONECTADO" : "SIN CONEXIÓN — REINTENTANDO..."}
         </span>
-        
       </div>
       <div className="flex gap-5 text-xs text-slate-400">
         {connected && (
@@ -363,7 +387,13 @@ function StatusBar({ connected, latency }: { connected: boolean; latency: number
             LATENCIA: <span className="text-sky-400">—</span>
           </span>
         )}
-        <span className="text-slate-500">{now()}</span>
+        <span className="text-gray-500 dark:text-slate-500">{now()}</span>
+        <button
+          onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+          className="ml-4 px-3 py-1 rounded-md border text-xs font-mono transition"
+        >
+          {theme === "dark" ? "🌙 Dark" : "☀️ Light"}
+        </button>
       </div>
     </div>
   );
@@ -522,16 +552,16 @@ function LogPanel({ entries }: { entries: LogEntry[] }) {
   };
 
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-xl flex flex-col overflow-hidden min-h-48">
-      <div className="px-4 py-3 border-b border-slate-800 flex justify-between">
-        <span className="text-[11px] text-slate-500 tracking-[0.08em] uppercase font-mono">
+    <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-xl flex flex-col overflow-hidden min-h-48">
+      <div className="px-4 py-3 border-b border-gray-200 dark:border-slate-800 flex justify-between">
+        <span className="text-[11px] text-gray-500 dark:text-slate-500 tracking-[0.08em] uppercase font-mono">
           Log de actividad
         </span>
-        <span className="text-[10px] text-slate-700 font-mono">{entries.length} entradas</span>
+        <span className="text-[10px] text-gray-400 dark:text-slate-700 font-mono">{entries.length} entradas</span>
       </div>
       <div ref={ref} className="max-h-45 overflow-y-auto py-2">
         {entries.length === 0 && (
-          <div className="px-4 py-3 text-slate-700 text-xs font-mono">
+          <div className="px-4 py-3 text-gray-400 dark:text-slate-700 text-xs font-mono">
             Esperando eventos...
           </div>
         )}
@@ -541,7 +571,7 @@ function LogPanel({ entries }: { entries: LogEntry[] }) {
             className="flex gap-2.5 px-4 py-1 text-xs font-mono"
             style={{ borderLeft: `2px solid ${borderColorMap[e.type]}` }}
           >
-            <span className="text-slate-700 min-w-17.5 shrink-0">{e.time}</span>
+            <span className="text-gray-400 dark:text-slate-700 min-w-17.5 shrink-0">{e.time}</span>
             <span className="min-w-10 shrink-0" style={{ color: colorMap[e.type] }}>
               [{e.type.toUpperCase()}]
             </span>

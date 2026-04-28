@@ -70,9 +70,9 @@ export default function SparklineChart({
   const delta = lastVal !== null && prevVal !== null ? lastVal - prevVal : null;
 
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-xl px-4 py-3.5 flex flex-col gap-2">
+    <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-xl px-4 py-3.5 flex flex-col gap-2 shadow-sm hover:bg-gray-50 dark:hover:bg-slate-800 transition">
       <div className="flex justify-between items-center">
-        <span className="text-[11px] text-slate-500 tracking-[0.08em] uppercase font-mono">
+        <span className="text-[11px] text-gray-500 dark:text-slate-500 tracking-[0.08em] uppercase font-mono">
           {label}
         </span>
         <div className="flex items-baseline gap-1">
@@ -82,7 +82,7 @@ export default function SparklineChart({
           >
             {lastVal !== null ? lastVal.toFixed(1) : "—"}
           </span>
-          <span className="text-xs text-slate-500">{unit}</span>
+          <span className="text-xs text-gray-500 dark:text-slate-500">{unit}</span>
           {delta !== null && (
             <span
               className="text-[11px] ml-1"
@@ -100,7 +100,7 @@ export default function SparklineChart({
         className="w-full rounded-md"
         style={{ height }}
       />
-      <div className="flex justify-between text-[10px] text-slate-700">
+      <div className="flex justify-between text-[10px] text-gray-400 dark:text-slate-700">
         <span>since {MAX_HISTORY}s</span>
         <span>{data.length} pts</span>
         <span>now</span>

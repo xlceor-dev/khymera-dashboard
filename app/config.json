@@ -1,49 +1,74 @@
 {
-    "actuators": {
-        "servo": {
-            "label": "Servo",
-            "min": 0,
-            "max": 180,
-            "unit": "°",
-            "color": "#ff0000",
-            "aiAction": "servo",
-            "presets": [
-              { "label": "0°", "value": 0 },
-              { "label": "45°", "value": 45 },
-              { "label": "90°", "value": 90 },
-              { "label": "135°", "value": 135 },
-              { "label": "180°", "value": 180 }
-            ]
-        }
+  "actuators": {
+    "servo": {
+      "label": "Servo",
+      "min": 0,
+      "max": 180,
+      "unit": "°",
+      "color": "#ff0000",
+      "aiAction": "servo",
+      "presets": [
+        { "label": "0°", "value": 0 },
+        { "label": "45°", "value": 45 },
+        { "label": "90°", "value": 90 },
+        { "label": "135°", "value": 135 },
+        { "label": "180°", "value": 180 }
+      ]
+    }
   },
-    "sensors": {
-
+  "sensors": {
     "temp": {
-
       "label": "Temperatura",
-
       "unit": "°C",
-
       "icon": "🌡",
-
       "color": "#f97316",
-
       "decimals": 1,
-
       "subtext": ""
-
     },
 
-    "adc": {
+    "humidity": {
+      "label": "Humedad",
+      "unit": "%",
+      "icon": "💧",
+      "color": "#22c55e",
+      "decimals": 1,
+      "subtext": ""
+    },
 
-      "label": "ADC",
-      "unit": "",
-      "icon": "⚡",
-      "color": "#38bdf8",
+    "heap": {
+      "label": "Memoria libre",
+      "unit": "bytes",
+      "icon": "🧠",
+      "color": "#facc15",
       "decimals": 0,
-      "subtext": "0 – 4095"
+      "subtext": "Heap"
+    },
 
+    "cpu": {
+      "label": "CPU",
+      "unit": "MHz",
+      "icon": "⚙️",
+      "color": "#fb7185",
+      "decimals": 0,
+      "subtext": "Frecuencia"
+    },
+
+    "uptime": {
+      "label": "Uptime",
+      "unit": "s",
+      "icon": "⏱",
+      "color": "#34d399",
+      "decimals": 0,
+      "subtext": "Tiempo activo"
+    },
+
+    "clients": {
+      "label": "Clientes",
+      "unit": "",
+      "icon": "📡",
+      "color": "#60a5fa",
+      "decimals": 0,
+      "subtext": "WiFi conectados"
     }
-
   }
 }
