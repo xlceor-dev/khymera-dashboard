@@ -88,6 +88,8 @@ export default function Dashboard() {
   const [input, setInput] = useState('');
   const [response, setResponse] = useState<any | null>(null);
   const [connected, setConnected] = useState(false)
+  const [latency, setLatency] = useState<number | null>(null);
+  const lastPingRef = useRef<number>(0);
   const [loading, setLoading] = useState(false);
   const [visible, setVisible] = useState(true)
   const [sensors, setSensors] = useState<Sensor[]>([]);
@@ -229,16 +231,16 @@ export default function Dashboard() {
 
 useEffect(() => {
     let active = true;
-  
+
     const connect = () => {
       sseRef.current?.close();
       const es = new EventSource(`http://192.168.4.1/events`);
       sseRef.current = es;
-  
+
       es.onopen = () => {
         if (active) setConnected(true);
       };
-  
+
       es.addEventListener("telemetry", (e) => {
         try {
           const data = JSON.parse(e.data);
@@ -247,18 +249,41 @@ useEffect(() => {
           console.error("SSE parse error", err);
         }
       });
-  
+
+      es.addEventListener("state", (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          addLog("info", `Servo actual: ${data.current?.toFixed?.(1) ?? data.current}`);
+        } catch {}
+      });
+
+      // Ping loop para latencia
+      const pingLoop = async () => {
+        try {
+          lastPingRef.current = Date.now();
+          const res = await fetch("http://192.168.4.1/ping");
+          const data = await res.json();
+          const now = Date.now();
+          setLatency(now - lastPingRef.current);
+        } catch {
+          setLatency(null);
+        }
+        if (active) setTimeout(pingLoop, 2000);
+      };
+
+      pingLoop();
+
       es.onerror = () => {
         if (active) {
-          setConnected(false); 
+          setConnected(false);
           es.close();
-          setTimeout(connect, 3000); 
+          setTimeout(connect, 3000);
         }
       };
     };
-  
+
     connect();
-  
+
     return () => {
       active = false;
       sseRef.current?.close();
@@ -272,7 +297,7 @@ useEffect(() => {
   return (
   <div className="min-h-screen bg-white dark:bg-gray-950 text-gray-900 dark:text-white text-sm font-sans transition-colors">
 
-    <StatusBar connected={connected} latency={0} theme={theme} setTheme={setTheme} />
+    <StatusBar connected={connected} latency={latency} theme={theme} setTheme={setTheme} />
 
     <div className="grid grid-cols-1 md:grid-cols-2 px-4 gap-6">
 
@@ -286,7 +311,11 @@ useEffect(() => {
               <MetricCard
                 key={sensor.key}
                 label={sensor.label}
-                value={val !== undefined ? val.toFixed(sensor.decimals ?? 0) : "—"}
+                value={
+                  val !== undefined
+                    ? Number(val).toFixed(sensor.decimals ?? 0)
+                    : "—"
+                }
                 unit={sensor.unit}
                 icon={sensor.icon}
                 color={sensor.color}
@@ -324,11 +353,11 @@ useEffect(() => {
       <LogPanel entries={log} />
     </div>
     <button className=" flex p-5 bg-black rounded-full w-14 h-14 items-center justify-center fixed bottom-10 right-10 border border-white/20" onClick={() => setVisible(!visible)}>
-      o
+      AI
     </button>
 
     </div>
-      {visible &&     
+      {visible &&
       <div className=" transform-cpu transition-all duration-300">
         <div className="fixed bottom-28 right-20 w-xl shadow-2xl">
           <AssistantPanel
@@ -352,7 +381,7 @@ function StatusBar({
   setTheme,
 }: {
   connected: boolean;
-  latency: number;
+  latency: number | null;
   theme: "light" | "dark";
   setTheme: (t: "light" | "dark") => void;
 }) {
@@ -384,7 +413,10 @@ function StatusBar({
       <div className="flex gap-5 text-xs text-slate-400">
         {connected && (
           <span>
-            LATENCIA: <span className="text-sky-400">—</span>
+            LATENCIA:{" "}
+            <span className="text-sky-400">
+              {latency !== null ? `${latency} ms` : "—"}
+            </span>
           </span>
         )}
         <span className="text-gray-500 dark:text-slate-500">{now()}</span>
@@ -562,7 +594,7 @@ function LogPanel({ entries }: { entries: LogEntry[] }) {
       <div ref={ref} className="max-h-45 overflow-y-auto py-2">
         {entries.length === 0 && (
           <div className="px-4 py-3 text-gray-400 dark:text-slate-700 text-xs font-mono">
-            Esperando eventos...
+            Esperando telemetría del sistema...
           </div>
         )}
         {entries.map((e, i) => (
